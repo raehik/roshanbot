@@ -1,4 +1,4 @@
 roshanbot
 =========
 
-roshanbot is an IRC bot framework!
+roshanbot is an IRC bot!
