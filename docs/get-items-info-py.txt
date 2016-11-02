@@ -1,0 +1,14 @@
+Some code for parsing the Dota 2 gamepedia. Probably not a good idea.
+
+```
+user_agent = "Mozilla/5.0"
+items_url = "http://dota2.gamepedia.com/api.php?action=parse&page=Items&format=json"
+
+logging.info("downloading items page")
+user_agent_header = { "User-agent": user_agent }
+req = request.Request(items_url, headers=user_agent_header)
+with request.urlopen(req) as response:
+    req_json = json.loads(response.read().decode("utf-8"))
+    soup = BeautifulSoup(req_json["parse"]["text"]["*"], "lxml")
+    print(soup.prettify())
+```
