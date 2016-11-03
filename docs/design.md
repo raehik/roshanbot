@@ -1,3 +1,24 @@
+Notes
+-----
+
+  * IRC does actually give numeric replies, use them to make sure you're
+    registered
+
+
+ConnectionHandler
+-----------------
+
+Allows plugins to **subscribe** to certain commands:
+
+  * plugins subscribe by giving a pattern and a priority
+  * if a message from the socket matches a pattern (regex?) specified by a
+    plugin, send the message to that plugin
+      * dict between patterns & matching plugin
+  * if the plugin decides that the message *is* valid, it tells the
+    ConnectionHandler, which stops checking the message against the rest of the
+    plugins
+
+
 Start-up
 --------
 
