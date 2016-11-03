@@ -12,9 +12,12 @@ import threading
 # TODO: general IRC msg class/type
 
 class Ponger(threading.Thread):
+    def __init__(self, roshanbot):
+        self.roshanbot = roshanbot
+
     def run(self):
         logging.info("Ponger started")
-        time.sleep(1)
+
         logging.info("Ponger ended")
 
 class PipeInterface(threading.Thread):
@@ -37,79 +40,147 @@ class PipeInterface(threading.Thread):
         fcntl.fcntl(self.cmd_pipe_out, fcntl.F_SETFL, os.O_NONBLOCK)
 
 class RoshanBot:
-    ENC = "utf-8"
-    SOCK_MAX_BYTES = 1024
-    TIMEOUT_SECS = 10
-
     def __init__(self):
         logging.debug("roshanbot starting...")
+        self.connection = ConnectionHandler("localhost", 6667, "roshan", "username", "realname")
+        #host = "irc.cs.kent.ac.uk"
+        #port = 6697
 
-        # config variables {{{
-        self.nick = "roshan"
-        self.username = "username-todo"
-        self.realname = "roshanbot"
+    def start(self):
+        """Start the bot."""
+        self.connection.connect()
+        t = threading.Thread(target=self.connection.read_sock)
+        t.start()
+        self.connection.register()
 
-        self.srv_host = "localhost"
-        self.srv_port = 6667
-        #self.srv_host = "irc.cs.kent.ac.uk"
-        #self.srv_port = 6697
+    def stop(self):
+        """Stop the bot."""
+        # IRC QUIT
+        self.send("QUIT :{}".format(self.quit_msg), needs_reg=False)
 
-        self.quit_msg = "Roshan has fallen to the Dire!"
-        # }}}
-        self.tmp_channel = "#bot-testing"
+        # close socket
+        self.connection.close()
 
-        self.srv_sock = socket.socket()
-        self.readbuf = ""
+class ConnectionHandler:
+    # Encoding to use for encoding all sent messages and decoding all
+    # received messages.
+    # TODO: possibility to decode other encodings? Shift-JIS, UTF-16 main ones
+    ENC = "utf-8"
 
-        self.connect()
+    # Maximum amount of bytes to read from the socket each time.
+    # TODO: why? and what? lmao
+    SOCK_MAX_BYTES = 1024
 
-        # tmp
-        self.send("JOIN {}".format(self.tmp_channel))
-        self.send("PRIVMSG {} :Hello Master\r\n".format("raehik"))
+    # How long to wait while attempting to connect the socket.
+    TIMEOUT_SECS = 10
+
+    # Message separator.
+    # Defined as CR+LF (\r\n) in RFC 1459.
+    MSG_SEP = "\r\n"
+
+    def send(self, msg, needs_reg=True):
+        """Encodes a string as UTF-8 and sends it to the socket."""
+        if needs_reg and not self.is_registered:
+            logging.debug("message needs registered but we aren't yet")
+            return
+        logging.debug("> {}".format(msg))
+        self.sock.send(bytes(
+            "{}{}".format(msg, ConnectionHandler.MSG_SEP).encode(
+                ConnectionHandler.ENC)))
+
+    def tmp_cmds(self):
+        # TODO: temporary on-start commands
+        logging.error("cheating, I set is_registered")
+        self.is_registered = True
+        self.send("JOIN #test")
+        self.send("PRIVMSG raehik :sup nigga")
+
+    def __init__(self, host, port, nick, username, realname):
+        self.host = host
+        self.port = port
+        self.nick = nick
+        self.username = username
+        self.realname = realname
+
+        # TODO: another thread which waits for 001 through 004 (or just 001, or
+        #       just 004), which sets this true
+        #       according to RFC 2813 section 5.2.1, the server is required to
+        #       send all 4 messages
+        self.is_registered = False
+
+        self.quit_msg = "Roshan has fallen to the Dire!" # TODO
+
+        self.sock = socket.socket()
+
+    def register(self):
+        """Register with the server."""
+        logging.info("registering...")
+        # TODO: optional PASS
+        self.send("NICK :{}".format(self.nick),
+                needs_reg=False)
+        time.sleep(1)
+        self.send("USER {} {} bla :{}".format("ident", "host", self.realname),
+                needs_reg=False)
+        self.tmp_cmds()
 
     def connect(self):
+        """Try to make a connection to the server."""
+        logging.info("connecting to server...")
+
+        # Set timeout.
+        # Note that we use a thread for the socket, so we use a blocking
+        # connection -- we'll set this back to 0 when we're connected.
+        self.sock.settimeout(ConnectionHandler.TIMEOUT_SECS)
+
         connected = False
         while not connected:
-            logging.info("connecting to server...")
             try:
-                self.srv_sock.connect((self.srv_host, self.srv_port))
-                # TODO: optional PASS
-                self.send("NICK :{}".format(self.nick))
-                self.send("USER {} {} bla :{}".format("ident", "host", self.realname))
+                self.sock.connect((self.host, self.port))
                 connected = True
-            except socket.error:
-                logging.warning("connection failed, trying again in {} seconds...".format(RoshanBot.TIMEOUT_SECS))
-                time.sleep(RoshanBot.TIMEOUT_SECS)
 
-    def send(self, msg):
-        """Encodes a string as UTF-8 and sends it to the socket."""
-        logging.debug("> {}".format(msg))
-        self.srv_sock.send(bytes("{}\n".format(msg).encode(RoshanBot.ENC)))
+                # make the socket blocking again
+                self.sock.settimeout(None)
+            except socket.timeout as e:
+                logging.error("timed out while trying to connect: {}:{}".format(self.host, self.port))
+                self.close()
+                sys.exit(10)
+            except socket.gaierror as e:
+                logging.error("error resolving host: {}".format(self.host))
+                self.close()
+                sys.exit(11)
+            except Exception as e:
+                logging.error("unknown error connecting socket: {}:{}".format(self.host, self.port))
+                raise e
 
-    def quit(self):
-        self.send("QUIT :{}".format(self.quit_msg))
+    def close(self):
+        """Close the socket connection safely.
 
-    def main_loop(self):
-        i = 0
+        Note that this does not close the IRC connection 'nicely' -- that
+        should be done elsewhere.
+        """
+        logging.info("closing connection...")
+        self.sock.close()
+
+    def read_sock(self):
+        # buffer to hold incomplete messages (needs to persist between loops)
+        readbuf = ""
+
         while True:
-            i += 1
-            logging.debug("loop {}".format(i))
-            logging.info(self.cmd_pipe_out.read())
-            ################################
             # get bytes from the socket (will return fewer if fewer available)
-            self.readbuf += self.srv_sock.recv(RoshanBot.SOCK_MAX_BYTES).decode(RoshanBot.ENC)
+            readbuf += self.sock.recv(ConnectionHandler.SOCK_MAX_BYTES).decode(ConnectionHandler.ENC)
 
-            # split messages on newlines
-            msg = self.readbuf.split("\n")
-            self.readbuf = msg.pop()
+            # split messages on specified separator
+            msgs = readbuf.split(ConnectionHandler.MSG_SEP)
+            readbuf = msgs.pop()
 
-            logging.debug("< {}".format(msg))
-            for parts in msg:
+            for m in msgs:
+                logging.debug("< {}".format(m))
                 #parts = str.rstrip(parts)
-                parts = str.split(parts)
+                parts = str.split(m)
 
                 if(parts[0] == "PING"):
-                    rosh.send("PONG {}".format(parts[1]))
+                    self.send("PONG {}".format(parts[1]),
+                            needs_reg=False)
                 if(parts[1] == "PRIVMSG"):
                     sender = ""
                     for char in parts[0]:
@@ -117,20 +188,13 @@ class RoshanBot:
                             break
                         if(char != ":"):
                             sender += char
-                    size = len(parts)
-                    i = 3
-                    message = ""
-                    while i < size:
-                        message += parts[i] + " "
-                        i = i + 1
-                    message.lstrip(":")
-                    rosh.send("PRIVMSG {} {}".format(sender, message))
+                    self.send("PRIVMSG {} :u said summin bout me???".format(sender))
 
 
 
 if __name__ == "__main__":
     rosh = RoshanBot()
     try:
-        rosh.main_loop()
+        rosh.start()
     except KeyboardInterrupt:
-        rosh.quit()
+        rosh.stop()
