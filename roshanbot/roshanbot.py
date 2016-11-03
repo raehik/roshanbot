@@ -9,8 +9,6 @@ import socket
 import time
 import threading
 
-# TODO: general IRC msg class/type
-
 class Ponger(threading.Thread):
     def __init__(self, roshanbot):
         self.roshanbot = roshanbot
@@ -129,7 +127,8 @@ class ConnectionHandler:
 
         # Set timeout.
         # Note that we use a thread for the socket, so we use a blocking
-        # connection -- we'll set this back to 0 when we're connected.
+        # connection (as is the default) -- we'll set this back to 0 when we're
+        # connected.
         self.sock.settimeout(ConnectionHandler.TIMEOUT_SECS)
 
         connected = False
